@@ -18,6 +18,16 @@ Result
 gap
 ```
 
+## Input
+
+```@docs
+read_dat_s
+SDPAProblem
+jump_model
+Sequoia.PSDBlock
+Sequoia.DiagonalBlock
+```
+
 ## Node oracles
 
 ```@docs
