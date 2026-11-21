@@ -68,7 +68,22 @@ Sequoia.solve(model; optimizer=OPT, options=opts,
 
 If every feasible point has an integer objective value (e.g. a cardinality objective),
 set `integral_objective=true`. Lower bounds are then rounded up before pruning, which can
-shrink the tree a lot.
+shrink the tree a lot. With `presolve` left on, Sequoia sets this itself when the objective
+is affine and integer-valued on the integer variables.
+
+## Presolve
+
+`presolve = true` (the default) reads the linear rows of the relaxed copy before the
+search:
+
+- a row on a single integer variable becomes part of the integer box, and the row is
+  dropped from the copy;
+- the remaining rows are propagated at every node, including the root. Fixing one variable
+  of an at-most-one row, for example, forces the others, and a row that cannot be satisfied
+  closes the node without a solve.
+
+Pass `presolve = false` to branch on the model exactly as written. Your own `propagate`
+callback still runs; the linear propagation runs first.
 
 ## Maximization
 

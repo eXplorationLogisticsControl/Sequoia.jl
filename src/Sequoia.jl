@@ -36,6 +36,7 @@ include("branching.jl")   # branching rules and split points
 include("nodes.jl")       # Node, node selection, child creation
 include("tree.jl")        # search-tree state: incumbent, pruning, node evaluation, logging
 include("solve.jl")       # core user-level API: solve(relax, lb, ub)
+include("presolve.jl")    # linear presolve: singleton bounds, propagation
 include("jump.jl")        # JuMP interface: jump_result, solve(model)
 include("io.jl")          # sparse SDPA reader
 

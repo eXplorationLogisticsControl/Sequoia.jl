@@ -51,6 +51,31 @@ end
     @test r.x ≈ [2.0] atol = 1e-6
 end
 
+# min x s.t. 0 ≤ x ≤ 1, with both bounds stored in a diagonal block. Optimum is x = 0.
+const BOUNDED_DAT = """
+1
+1
+-2
+1.0
+1 1 1 1 1.0
+0 1 1 1 0.0
+1 1 2 2 -1.0
+0 1 2 2 -1.0
+*INTEGERS*
+*1
+"""
+
+@testset "diagonal block bounds are finite" begin
+    p = dat_problem(BOUNDED_DAT)
+    seen = Ref{Any}(nothing)
+    r = solve(jump_model(p); optimizer=OPT, options=QUIET,
+              propagate=(l, u) -> (seen[] = (copy(l), copy(u)); (l, u)))
+    @test r.status === :optimal
+    @test r.objective ≈ 0 atol = 1e-6
+    @test r.x ≈ [0] atol = 1e-6
+    @test seen[][1] == [0.0] && seen[][2] == [1.0]
+end
+
 @testset "off-diagonal symmetry" begin
     one = dat_problem("""
     1

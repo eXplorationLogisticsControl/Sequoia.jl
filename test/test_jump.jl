@@ -123,6 +123,99 @@ end
     @test r.objective ≈ 22 atol = 1e-5
 end
 
+@testset "linear presolve" begin
+    # an affine bound is not a variable bound, so only presolve puts it in the box
+    model = Model()
+    @variable(model, x, Int)
+    @constraint(model, 2x >= -1)
+    @constraint(model, 2x <= 3)
+    @objective(model, Min, x)
+    relaxed, refmap = copy_model(model)
+    rows = Sequoia.linear_rows(relaxed, [refmap[x]])
+    lb, ub = [-Inf], [Inf]
+    Sequoia.extract_singletons!(relaxed, rows, [refmap[x]], lb, ub)
+    @test lb[1] ≈ -0.5 && ub[1] ≈ 1.5
+    @test isempty(rows.rows)
+    @test num_constraints(relaxed, AffExpr, MOI.GreaterThan{Float64}) == 0
+    @test num_constraints(model, AffExpr, MOI.GreaterThan{Float64}) == 1   # model untouched
+
+    seen = Ref{Any}(nothing)
+    r = solve(model; optimizer=OPT, options=QUIET,
+              propagate=(l, u) -> (seen[] = (copy(l), copy(u)); (l, u)))
+    @test r.status === :optimal && r.x == [0]
+    @test seen[][1] == [0.0] && seen[][2] == [1.0]   # rounded inward
+
+    # a continuous singleton tightens the static bound and stays in the model
+    model = Model()
+    @variable(model, y)
+    @constraint(model, 2y <= 4)
+    rows = Sequoia.linear_rows(model, JuMP.VariableRef[])
+    Sequoia.extract_singletons!(model, rows, JuMP.VariableRef[], Float64[], Float64[])
+    @test rows.ub[1] == 2
+    @test length(rows.rows) == 1
+    @test num_constraints(model, AffExpr, MOI.LessThan{Float64}) == 1
+
+    # at most one: fixing the first variable forces the other two off
+    model = Model()
+    @variable(model, z[1:3], Bin)
+    @constraint(model, sum(z) <= 1)
+    rows = Sequoia.linear_rows(model, z)
+    fixed = Sequoia.propagate_linear(rows, [1.0, 0, 0], [1.0, 1, 1]; int_tol=1e-6)
+    @test fixed isa Tuple && fixed[1] == [1.0, 0, 0] && fixed[2] == [1.0, 0, 0]
+
+    # the same row, inside the search: same optimum, and the infeasible child is not solved
+    model = Model()
+    @variable(model, z[1:3], Bin)
+    @constraint(model, sum(z) <= 1)
+    @constraint(model, 2 * sum(z) >= 1.5)
+    @objective(model, Min, 0.5 * sum(z))
+    r = solve(model; optimizer=OPT, options=QUIET)
+    r2 = solve(model; optimizer=OPT, options=QUIET, presolve=false)
+    @test r.status === :optimal && r2.status === :optimal
+    @test r.objective ≈ 0.5 atol = 1e-6
+    @test r2.objective ≈ 0.5 atol = 1e-6
+    @test sum(r.x) == 1
+    @test r.nodes < r2.nodes
+
+    # propagation proves the root empty, so no relaxation is solved
+    model = Model()
+    @variable(model, z[1:2], Bin)
+    @constraint(model, sum(z) >= 3)
+    @objective(model, Min, sum(z))
+    r = solve(model; optimizer=OPT, options=QUIET)
+    @test r.status === :infeasible && r.nodes == 0 && r.x === nothing
+
+    # an integer objective is detected; a fractional coefficient or a continuous term is not
+    model = Model()
+    @variable(model, z[1:2], Bin)
+    @variable(model, y)
+    @objective(model, Min, z[1] + 2z[2])
+    @test Sequoia.integral_objective(model, z)
+    @objective(model, Min, 0.5 * z[1] + 0.5 * z[2])
+    @test !Sequoia.integral_objective(model, z)
+    @objective(model, Min, y + z[1])
+    @test !Sequoia.integral_objective(model, z)
+    @objective(model, Min, 4)
+    @test Sequoia.integral_objective(model, z)
+
+    model = Model()
+    @variable(model, z[1:4], Bin)
+    @constraint(model, 2 * sum(z) >= 3)
+    @objective(model, Min, sum(z))
+    r = solve(model; optimizer=OPT, options=QUIET)
+    r2 = solve(model; optimizer=OPT, options=QUIET, presolve=false)
+    @test r.status === :optimal && r.objective ≈ 2
+    @test r2.objective ≈ 2 && r.nodes <= r2.nodes
+
+    model = Model()
+    @variable(model, z[1:2], Bin)
+    @constraint(model, sum(z) >= 1)
+    @objective(model, Min, 0.5 * sum(z))
+    r = solve(model; optimizer=OPT, options=QUIET)
+    @test r.status === :optimal && sum(r.x) == 1
+    @test r.objective ≈ 0.5 atol = 1e-6
+end
+
 @testset "unsupported constraints" begin
     model = Model()
     @variable(model, x[1:2] >= 0)

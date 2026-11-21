@@ -98,7 +98,7 @@ function set_box!(v::JuMP.VariableRef, l::Float64, u::Float64)
 end
 
 """
-    solve(model::JuMP.Model; optimizer, kwargs...) -> Result
+    solve(model::JuMP.Model; optimizer, presolve=true, kwargs...) -> Result
 
 Branch and bound on a JuMP model with `Bin`/`Int` variables. The model itself is not
 modified: Sequoia relaxes a copy and solves each node with `optimizer` (e.g.
@@ -106,6 +106,11 @@ modified: Sequoia relaxes a copy and solves each node with `optimizer` (e.g.
 with [`jump_result`](@ref).
 
 Other keyword arguments are as in the core [`solve`](@ref solve(::Any, ::AbstractVector, ::AbstractVector)).
+`presolve = true` moves singleton linear rows on the integer variables into the integer box
+and propagates the remaining rows at every node. It also turns
+`integral_objective` on when the objective is affine and integer-valued on those variables.
+Pass `presolve = false` to branch on the model exactly as written.
+
 `x` and the vectors passed to `heuristic`/`polish` are ordered like the integer variables in
 `JuMP.all_variables(model)`. `incumbent`, the values returned by `heuristic` and `polish`,
 the progress log, the termination summary, and the `objective`, `bound`, `root_bound` and
@@ -117,7 +122,7 @@ Bounds of the integer variables may be given as variable bounds, by fixing, or a
 
 SOS, semicontinuous, semi-integer and indicator constraints are not supported.
 """
-function solve(model::JuMP.Model; optimizer, kwargs...)
+function solve(model::JuMP.Model; optimizer, presolve::Bool=true, kwargs...)
     for (F, S) in JuMP.list_of_constraint_types(model)
         unsupported_set(S) && throw(ArgumentError("constraints of type $F-in-$S are not supported"))
     end
@@ -128,6 +133,25 @@ function solve(model::JuMP.Model; optimizer, kwargs...)
     relaxed, refmap = JuMP.copy_model(model)
     ints = [refmap[v] for v in ints0]
     move_interval_bounds!(relaxed, ints, lb0, ub0)
+    kw = Dict{Symbol,Any}(kwargs)
+    if presolve
+        rows = linear_rows(relaxed, ints)
+        extract_singletons!(relaxed, rows, ints, lb0, ub0)
+        o = get(kw, :options, Options())
+        presolve_propagate = (l, u) -> propagate_linear(rows, l, u; int_tol=o.int_tol)
+        user_propagate = get(kw, :propagate, nothing)
+        kw[:propagate] = if user_propagate === nothing
+            presolve_propagate
+        else
+            (l, u) -> begin
+                tightened = presolve_propagate(l, u)
+                return tightened === nothing ? nothing : user_propagate(tightened...)
+            end
+        end
+        if integral_objective(model, ints0)
+            kw[:options] = Options(o; integral_objective=true)
+        end
+    end
     JuMP.relax_integrality(relaxed)
     JuMP.set_optimizer(relaxed, optimizer)
 
@@ -140,11 +164,10 @@ function solve(model::JuMP.Model; optimizer, kwargs...)
     end
 
     sgn = JuMP.objective_sense(model) == MOI.MAX_SENSE ? -1.0 : 1.0
-    sgn == 1 && return solve(relax, lb0, ub0; kwargs...)
+    sgn == 1 && return solve(relax, lb0, ub0; kw...)
 
     # maximization: the core minimizes -f, and user callbacks speak in the model's sense.
     # An infinite incumbent of either sign means "none".
-    kw = Dict{Symbol,Any}(kwargs)
     haskey(kw, :incumbent) && (kw[:incumbent] = isinf(kw[:incumbent]) ? Inf : -kw[:incumbent])
     if get(kw, :heuristic, nothing) !== nothing
         h0 = kw[:heuristic]
