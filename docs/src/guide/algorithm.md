@@ -5,8 +5,9 @@ a box `[lb, ub]` of integer bounds. Internally, everything is in the minimizatio
 
 ## Main loop
 
-1. **Root.** Round the bounds inward (`ceil(lb - int_tol)`, `floor(ub + int_tol)`) and
-   solve the root relaxation.
+1. **Root.** Round the bounds inward (`ceil(lb - int_tol)`, `floor(ub + int_tol)`). If a
+   [`propagate`](@ref solve(::Any, ::AbstractVector, ::AbstractVector)) callback is given,
+   it tightens this box, or proves it empty. Then solve the root relaxation.
 2. **Select** an open node: best bound first (`node_selection = :best`, ties go to the
    newest node) or depth first (`:depth`, last in, first out).
 3. **Prune** it if its bound cannot improve the incumbent, i.e. if
@@ -16,8 +17,9 @@ a box `[lb, ub]` of integer bounds. Internally, everything is in the minimizatio
 4. **Heuristic.** If the node has a relaxed solution, call `heuristic` and update the
    incumbent. A better incumbent immediately removes every open node it closes.
 5. **Branch** on the variable `k` chosen by the branching rule. With split value `v`, the
-   children get `x_k ≤ floor(v)` and `x_k ≥ ceil(v)`. Each child's relaxation is solved
-   right away (eager evaluation), and the child is stored only if it still needs work.
+   children get `x_k ≤ floor(v)` and `x_k ≥ ceil(v)`. Each child is propagated and then
+   solved right away (eager evaluation), and it is stored only if it still needs work.
+   Propagation that proves a child empty closes it without a solve.
 
 The loop stops when no open node is left, or when `time_limit` or `node_limit` is reached.
 

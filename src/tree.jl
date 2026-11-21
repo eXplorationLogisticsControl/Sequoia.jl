@@ -14,7 +14,7 @@ lower bound on its points. Their minimum is the global bound:
 - closed subtrees whose best point is known (infeasible, or integral relaxation). These are
   bounded by the incumbent.
 """
-mutable struct Tree{R,H,P,B}
+mutable struct Tree{R,H,P,B,G}
     const relax::R
     const heuristic::H
     const polish::P
@@ -32,13 +32,14 @@ mutable struct Tree{R,H,P,B}
     const trace::Vector{Snapshot}
     last_log::Float64
     const log_sign::Float64
+    const propagate::G
 end
 
 function Tree(relax, heuristic, polish, branch, options::Options, nvars::Integer,
-              incumbent::Real, x_incumbent, log_sign::Real=1.0)
+              incumbent::Real, x_incumbent, log_sign::Real=1.0, propagate=nothing)
     return Tree(relax, heuristic, polish, branch, options, Int(nvars), time(),
                 Float64(incumbent), x_incumbent, 0, 0, Node[], Inf, Inf, Snapshot[], -Inf,
-                Float64(log_sign))
+                Float64(log_sign), propagate)
 end
 
 """
@@ -99,6 +100,42 @@ function global_bound(t::Tree)
 end
 
 """
+    apply_propagate!(t, lb, ub) -> Union{Nothing,Tuple}
+
+Tighten `[lb, ub]` in place with `t.propagate`, if there is one. The callback receives
+copies and returns `(lb, ub)`, or `nothing` when the box is empty. The result is
+intersected with the current box, so it can never loosen a bound, and then rounded inward
+to integers. Returns `nothing` when the tightened box holds no integer point, and `(lb, ub)`
+otherwise.
+
+Throws a `DimensionMismatch` when the returned bounds have the wrong length, and an
+`ArgumentError` when they contain `NaN` or are not a pair of vectors.
+"""
+function apply_propagate!(t::Tree, lb::Vector{Float64}, ub::Vector{Float64})
+    t.propagate === nothing && return (lb, ub)
+    result = t.propagate(copy(lb), copy(ub))
+    result === nothing && return nothing
+    (result isa Tuple && length(result) == 2) ||
+        throw(ArgumentError("propagate must return (lb, ub) or nothing, got $(typeof(result))"))
+    nlb, nub = result
+    (nlb isa AbstractVector && nub isa AbstractVector) ||
+        throw(ArgumentError("propagate must return bounds as vectors, got $(typeof(nlb)) and $(typeof(nub))"))
+    (length(nlb) == length(lb) && length(nub) == length(ub)) ||
+        throw(DimensionMismatch("propagate returned bounds of lengths $(length(nlb)) and $(length(nub)), expected $(length(lb))"))
+    (any(isnan, nlb) || any(isnan, nub)) &&
+        throw(ArgumentError("propagate must not return NaN bounds"))
+    tol = t.options.int_tol
+    for i in eachindex(lb, ub)
+        l = ceil(max(lb[i], Float64(nlb[i])) - tol)
+        u = floor(min(ub[i], Float64(nub[i])) + tol)
+        l > u && return nothing
+        lb[i] = l
+        ub[i] = u
+    end
+    return (lb, ub)
+end
+
+"""
     evaluate!(t, lb, ub, parent_bound) -> Float64
 
 Solve the relaxation of the node `[lb, ub]` and act on the result:
@@ -115,9 +152,11 @@ Solve the relaxation of the node `[lb, ub]` and act on the result:
 
 The oracle and the callbacks get copies, so they cannot corrupt the tree by mutating or
 reusing vectors. Returns the relaxation's own bound: `Inf` if infeasible, `-Inf` if failed
-or unavailable.
+or unavailable. A box that propagation proves empty is infeasible too, and is not counted
+as a solved node.
 """
 function evaluate!(t::Tree, lb::Vector{Float64}, ub::Vector{Float64}, parent_bound::Float64)
+    apply_propagate!(t, lb, ub) === nothing && return Inf
     r = t.relax(copy(lb), copy(ub))
     r isa NodeResult || throw(ArgumentError("the node oracle must return a NodeResult, got $(typeof(r))"))
     t.nodes += 1

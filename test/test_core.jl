@@ -128,6 +128,47 @@ end
     @test gap(r) ≈ 1 / 3
 end
 
+@testset "propagate" begin
+    t = [0.3, 0.8]
+    seen = Tuple{Vector{Float64},Vector{Float64}}[]
+    oracle = projection_oracle(t)
+    relax(l, u) = (push!(seen, (copy(l), copy(u))); oracle(l, u))
+    # the oracle only ever sees the tightened box: x₁ fixed at 0, x₂ at most 1
+    r = solve(relax, [0.0, 0.0], [1.0, 5.0]; options=QUIET,
+              propagate=(l, u) -> ([0.0, l[2]], [0.0, min(u[2], 1.0)]))
+    @test r.status === :optimal && r.x == [0, 1]
+    @test all(lu -> lu[1][1] == 0.0 && lu[2][1] == 0.0 && lu[2][2] <= 1.0, seen)
+
+    # nothing closes the up-child without a solve, and that solve is not counted
+    calls = Ref(0)
+    r = solve(projection_oracle(t; calls), [0.0, 0.0], [1.0, 1.0]; options=QUIET,
+              propagate=(l, u) -> l[1] >= 1 ? nothing : (l, u))
+    full = Ref(0)
+    solve(projection_oracle(t; calls=full), [0.0, 0.0], [1.0, 1.0]; options=QUIET)
+    @test r.status === :optimal && r.x == [0, 1]
+    @test r.nodes == calls[] < full[]
+
+    # the root box holds no integer point
+    calls[] = 0
+    r = solve(projection_oracle([0.5]; calls), [0.0], [1.0]; options=QUIET,
+              propagate=(l, u) -> nothing)
+    @test r.status === :infeasible && r.nodes == 0 && calls[] == 0 && r.root_bound == Inf
+
+    # a returned box is intersected with the node's box, so it cannot loosen a bound
+    seen1 = Tuple{Vector{Float64},Vector{Float64}}[]
+    oracle1 = projection_oracle([0.3])
+    relax1(l, u) = (push!(seen1, (copy(l), copy(u))); oracle1(l, u))
+    r = solve(relax1, [0.0], [1.0]; options=QUIET, propagate=(l, u) -> ([-10.0], [10.0]))
+    @test r.status === :optimal && r.x == [0]
+    @test all(lu -> lu[1][1] >= 0 && lu[2][1] <= 1, seen1)
+
+    f = projection_oracle([0.3])
+    @test_throws DimensionMismatch solve(f, [0.0], [1.0]; options=QUIET,
+                                         propagate=(l, u) -> ([0.0, 0.0], [1.0]))
+    @test_throws ArgumentError solve(f, [0.0], [1.0]; options=QUIET,
+                                     propagate=(l, u) -> ([NaN], [1.0]))
+end
+
 @testset "invalid oracle output and branching rules" begin
     @test_throws ArgumentError solve((l, u) -> 1.0, [0], [1])
     @test_throws ArgumentError solve((l, u) -> NodeResult(:feasible), [0], [1])

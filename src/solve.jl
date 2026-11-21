@@ -1,6 +1,7 @@
 """
     solve(relax, lb, ub; options=Options(), incumbent=Inf, x_incumbent=nothing,
-          heuristic=nothing, polish=nothing, branch=most_fractional, log_sign=1) -> Result
+          heuristic=nothing, polish=nothing, branch=most_fractional, log_sign=1,
+          propagate=nothing) -> Result
 
 Branch and bound over integer variables `x ∈ [lb, ub] ∩ ℤⁿ` (minimization). Bounds are
 rounded inward to integers, and may be infinite.
@@ -23,6 +24,10 @@ rounded inward to integers, and may be infinite.
 - `branch(x, lb, ub, int_tol) -> index or nothing`: branching rule (see
   [`most_fractional`](@ref)). If it returns `nothing` for a node that still has free
   variables, [`first_free`](@ref) is used.
+- `propagate(lb, ub) -> (lb, ub)` or `nothing`: tightens the integer box before every
+  relaxation, including the root. `nothing` means the box holds no feasible point, and the
+  node is closed without a solve. Returned bounds are intersected with the current box, so
+  a bound can only get tighter, and then rounded inward to integers.
 - `log_sign = 1`: multiplies the incumbent and the bound in the progress log and the
   termination summary; the search always minimizes.
 
@@ -32,7 +37,8 @@ See [`Options`](@ref) for limits and tolerances and [`Result`](@ref) for the out
 """
 function solve(relax, lb::AbstractVector, ub::AbstractVector;
                options::Options=Options(), incumbent::Real=Inf, x_incumbent=nothing,
-               heuristic=nothing, polish=nothing, branch=most_fractional, log_sign::Real=1)
+               heuristic=nothing, polish=nothing, branch=most_fractional, log_sign::Real=1,
+               propagate=nothing)
     o = validate(options)
     length(lb) == length(ub) ||
         throw(DimensionMismatch("lb and ub have lengths $(length(lb)) and $(length(ub))"))
@@ -49,8 +55,10 @@ function solve(relax, lb::AbstractVector, ub::AbstractVector;
     lb0 = Float64[ceil(l - o.int_tol) for l in lb]
     ub0 = Float64[floor(u + o.int_tol) for u in ub]
 
-    t = Tree(relax, heuristic, polish, branch, o, n, incumbent, x_incumbent, log_sign)
-    if any(lb0 .> ub0)   # no integer point: infeasible whatever the warm start claims
+    t = Tree(relax, heuristic, polish, branch, o, n, incumbent, x_incumbent, log_sign, propagate)
+    # No integer point, or propagation proves the root empty. Infeasible whatever the warm
+    # start claims.
+    if any(lb0 .> ub0) || apply_propagate!(t, lb0, ub0) === nothing
         trace = [log!(t, true)]
         elapsed = time() - t.t0
         log_summary!(t, :infeasible, Inf, elapsed)

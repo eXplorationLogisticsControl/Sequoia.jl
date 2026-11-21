@@ -74,6 +74,21 @@ result = solve(lp_relax, zeros(3), fill(3.0, 3); options=Options(log_every=Inf))
 For speed, build the model once outside the oracle and only update the variable bounds
 inside it, as [`solve(model::JuMP.Model)`](@ref solve(::JuMP.Model)) does.
 
+## Bound propagation
+
+`propagate(lb, ub)` is called before every relaxation, including the root. It returns a
+tighter box `(lb, ub)`, or `nothing` when the box holds no feasible point. `nothing`, or a
+box with no integer point, closes the node without a solve and without counting it.
+Sequoia intersects the returned box with the node's box, so a bound can only get tighter,
+and then rounds it inward the same way as the root bounds. The oracle, the heuristic and
+the branching rule all see the tightened box.
+
+```julia
+# a cardinality cut the relaxation does not know about
+propagate(lb, ub) = sum(ub) < 2 ? nothing : (lb, min.(ub, 1.0))
+solve(relax, lb, ub; propagate)
+```
+
 ## Heuristics and polishing
 
 - `heuristic(x, lb, ub) -> (value, xint)` or `nothing` is called on each node taken from the
