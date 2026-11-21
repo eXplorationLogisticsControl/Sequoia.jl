@@ -20,7 +20,8 @@ Settings for [`solve`](@ref). The second form copies `o` with some fields replac
   `ceil(b - max(int_tol, abs_gap, rel_gap·|b|))`.
 - `node_selection::Symbol = :best`: `:best` (best-bound first) or `:depth` (depth first,
   last-in first-out).
-- `log_every::Float64 = 5.0`: seconds between progress lines (`Inf` for silent).
+- `log_every::Float64 = 5.0`: seconds between progress lines. `Inf` silences the progress
+  log and the termination summary.
 """
 Base.@kwdef struct Options
     time_limit::Float64 = Inf

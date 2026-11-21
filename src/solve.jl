@@ -1,6 +1,6 @@
 """
     solve(relax, lb, ub; options=Options(), incumbent=Inf, x_incumbent=nothing,
-          heuristic=nothing, polish=nothing, branch=most_fractional) -> Result
+          heuristic=nothing, polish=nothing, branch=most_fractional, log_sign=1) -> Result
 
 Branch and bound over integer variables `x ∈ [lb, ub] ∩ ℤⁿ` (minimization). Bounds are
 rounded inward to integers, and may be infinite.
@@ -23,6 +23,8 @@ rounded inward to integers, and may be infinite.
 - `branch(x, lb, ub, int_tol) -> index or nothing`: branching rule (see
   [`most_fractional`](@ref)). If it returns `nothing` for a node that still has free
   variables, [`first_free`](@ref) is used.
+- `log_sign = 1`: multiplies the incumbent and the bound in the progress log and the
+  termination summary; the search always minimizes.
 
 All callbacks receive copies of Sequoia's vectors, so they may modify or keep them.
 
@@ -30,7 +32,7 @@ See [`Options`](@ref) for limits and tolerances and [`Result`](@ref) for the out
 """
 function solve(relax, lb::AbstractVector, ub::AbstractVector;
                options::Options=Options(), incumbent::Real=Inf, x_incumbent=nothing,
-               heuristic=nothing, polish=nothing, branch=most_fractional)
+               heuristic=nothing, polish=nothing, branch=most_fractional, log_sign::Real=1)
     o = validate(options)
     length(lb) == length(ub) ||
         throw(DimensionMismatch("lb and ub have lengths $(length(lb)) and $(length(ub))"))
@@ -47,9 +49,12 @@ function solve(relax, lb::AbstractVector, ub::AbstractVector;
     lb0 = Float64[ceil(l - o.int_tol) for l in lb]
     ub0 = Float64[floor(u + o.int_tol) for u in ub]
 
-    t = Tree(relax, heuristic, polish, branch, o, n, incumbent, x_incumbent)
+    t = Tree(relax, heuristic, polish, branch, o, n, incumbent, x_incumbent, log_sign)
     if any(lb0 .> ub0)   # no integer point: infeasible whatever the warm start claims
-        return Result(:infeasible, Inf, Inf, nothing, 0, 0, Inf, time() - t.t0, [log!(t, true)])
+        trace = [log!(t, true)]
+        elapsed = time() - t.t0
+        log_summary!(t, :infeasible, Inf, elapsed)
+        return Result(:infeasible, Inf, Inf, nothing, 0, 0, Inf, elapsed, trace)
     end
     root_bound = evaluate!(t, lb0, ub0, -Inf)
     status = :optimal
@@ -90,6 +95,8 @@ function solve(relax, lb::AbstractVector, ub::AbstractVector;
         status = discard!(t, t.lost) ? (isfinite(t.incumbent) ? :optimal : :infeasible) : :incomplete
     end
     bound = status in (:optimal, :infeasible) ? min(t.incumbent, t.pruned) : global_bound(t)
+    elapsed = time() - t.t0
+    log_summary!(t, status, bound, elapsed)
     return Result(status, t.incumbent, bound, t.x_incumbent, t.nodes, t.unknown, root_bound,
-                  time() - t.t0, t.trace)
+                  elapsed, t.trace)
 end

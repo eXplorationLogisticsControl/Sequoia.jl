@@ -108,8 +108,9 @@ with [`jump_result`](@ref).
 Other keyword arguments are as in the core [`solve`](@ref solve(::Any, ::AbstractVector, ::AbstractVector)).
 `x` and the vectors passed to `heuristic`/`polish` are ordered like the integer variables in
 `JuMP.all_variables(model)`. `incumbent`, the values returned by `heuristic` and `polish`,
-and the `objective`, `bound`, `root_bound` and `trace` of the result are all in the model's
-own objective sense. An infinite `incumbent` (of either sign) means no warm start.
+the progress log, the termination summary, and the `objective`, `bound`, `root_bound` and
+`trace` of the result are all in the model's own objective sense. An infinite `incumbent` (of either sign) means no
+warm start.
 
 Bounds of the integer variables may be given as variable bounds, by fixing, or as
 `x in MOI.Interval(l, u)` constraints.
@@ -153,6 +154,7 @@ function solve(model::JuMP.Model; optimizer, kwargs...)
         p0 = kw[:polish]
         kw[:polish] = x -> (v = p0(x); v === nothing ? v : -v)
     end
+    kw[:log_sign] = -1.0
     r = solve(relax, lb0, ub0; kw...)
     trace = Snapshot[(; s..., bound=-s.bound, incumbent=-s.incumbent) for s in r.trace]
     return Result(r.status, -r.objective, -r.bound, r.x, r.nodes, r.unknown, -r.root_bound,
