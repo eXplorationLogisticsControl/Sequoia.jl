@@ -216,6 +216,81 @@ end
     @test r.objective ≈ 0.5 atol = 1e-6
 end
 
+@testset "reused Clarabel solver" begin
+    ext = Base.get_extension(Sequoia, :SequoiaClarabelExt)
+    @test ext !== nothing
+
+    function conic_model(reuse; huge_row=false)
+        cm = Model()
+        Sequoia.set_node_optimizer!(cm, OPT, reuse)
+        @variable(cm, cx[1:3])
+        @constraint(cm, Symmetric([cx[1] 0.3; 0.3 cx[2]]) in PSDCone())
+        @constraint(cm, [cx[3]; cx[1] - 0.2; cx[2] - 0.7] in SecondOrderCone())
+        huge_row && @constraint(cm, cx[1] + cx[2] <= 1e30)   # Clarabel's presolve drops it
+        @objective(cm, Min, cx[1] + 2cx[2] + cx[3])
+        return cm, cx
+    end
+    boxes = [([0.0, 0, 0], [1.0, 1, 1]), ([0.5, 0, 0], [1.0, 0.4, 1]),
+             ([0.0, 0.6, 0], [0.2, 0.6, 1]), ([1.0, 1, 0], [1.0, 1, 0.1])]
+    clarabel_solver(m) = unsafe_backend(m).inner.solver
+
+    for huge_row in (false, true)
+        m, x = conic_model(true; huge_row)
+        solvers = []
+        for (l, u) in boxes
+            foreach(Sequoia.set_box!, x, l, u)
+            optimize!(m)
+            push!(solvers, clarabel_solver(m))
+            fresh, fx = conic_model(false; huge_row)
+            foreach(Sequoia.set_box!, fx, l, u)
+            optimize!(fresh)
+            r, rf = jump_result(m, x), jump_result(fresh, fx)
+            @test r.status === rf.status
+            if r.status === :optimal
+                @test r.value ≈ rf.value atol = 1e-6
+                @test r.x ≈ rf.x atol = 1e-5
+            end
+        end
+        # new bound values update the solver in place, unless presolve has dropped rows
+        @test allunique(solvers) == huge_row
+        @test allequal(solvers) == !huge_row
+
+        # dropping a bound deletes its row, so the solver is rebuilt
+        Sequoia.set_box!(x[3], 0.0, Inf)
+        optimize!(m)
+        @test clarabel_solver(m) !== last(solvers)
+        @test jump_result(m, x).status === :optimal
+    end
+
+    # branching from infinite bounds adds rows; results match a solver rebuilt at every node
+    model = Model()
+    @variable(model, x[1:2], Int)
+    @variable(model, t)
+    @constraint(model, [t; x[1] - 2.6; x[2] + 1.3] in SecondOrderCone())
+    @objective(model, Min, t)
+    r = solve(model; optimizer=OPT, options=QUIET)
+    r2 = solve(model; optimizer=OPT, options=QUIET, reuse_solver=false)
+    @test r.status === r2.status === :optimal
+    @test r.x == r2.x == [3, -1]
+    @test r.objective ≈ r2.objective atol = 1e-7
+
+    Random.seed!(2)
+    n, d = 7, 3
+    A = [(G = randn(d, 2); G * G') for _ in 1:n]
+    B = 0.6 * sum(A) / n * 3
+    c = rand(n) .+ 0.5
+    model = Model()
+    @variable(model, z[1:n], Bin)
+    @constraint(model, Symmetric(sum(z[i] * A[i] for i in 1:n) - B) in PSDCone())
+    @objective(model, Min, dot(c, z))
+    r = solve(model; optimizer=OPT, options=QUIET)
+    r2 = solve(model; optimizer=OPT, options=QUIET, reuse_solver=false)
+    @test r.status === r2.status === :optimal
+    @test r.x == r2.x
+    @test r.objective ≈ r2.objective rtol = 1e-7
+    check_invariants(r)
+end
+
 @testset "unsupported constraints" begin
     model = Model()
     @variable(model, x[1:2] >= 0)

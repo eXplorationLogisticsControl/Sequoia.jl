@@ -2,10 +2,10 @@
 
 import Pkg
 Pkg.activate(@__DIR__)
+# As a package, not `include`d, so that Sequoia's Clarabel extension loads.
+Pkg.develop(path=joinpath(@__DIR__, ".."); io=devnull)
 
-using Clarabel, Dates, JuMP, Printf
-include(joinpath(@__DIR__, "..", "src", "Sequoia.jl"))
-using .Sequoia
+using Clarabel, Dates, JuMP, Printf, Sequoia
 
 # Chordal decomposition crashes on these sparse PSD blocks (Clarabel indexes an
 # OrderedSet). The blocks are small, so the dense factorization is the reliable path.

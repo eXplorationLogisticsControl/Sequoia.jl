@@ -77,13 +77,13 @@ function move_interval_bounds!(relaxed::JuMP.Model, ints, lb, ub)
     return lb, ub
 end
 
-"Restrict the relaxed variable `v` to `[l, u]`, replacing any previous bounds or fixing."
+"""
+Restrict the relaxed variable `v` to `[l, u]`, replacing any previous bounds or fixing. A
+fixed value is kept as two equal bounds, so that moving a finite bound only changes the
+value of an existing constraint.
+"""
 function set_box!(v::JuMP.VariableRef, l::Float64, u::Float64)
     JuMP.is_fixed(v) && JuMP.unfix(v)
-    if l == u
-        JuMP.fix(v, l; force=true)
-        return v
-    end
     if isfinite(l)
         JuMP.set_lower_bound(v, l)
     elseif JuMP.has_lower_bound(v)
@@ -98,7 +98,32 @@ function set_box!(v::JuMP.VariableRef, l::Float64, u::Float64)
 end
 
 """
-    solve(model::JuMP.Model; optimizer, presolve=true, kwargs...) -> Result
+    reusable_optimizer(optimizer) -> MOI.ModelLike or nothing
+
+An optimizer built around the instantiated `optimizer`, with its own cache and bridges, that
+keeps the solver when only finite variable bounds change between nodes. `nothing` if there
+is none for this optimizer. Package extensions add methods; Sequoia has one for Clarabel.
+"""
+reusable_optimizer(::Any) = nothing
+
+"""
+Attach `optimizer` to the relaxed copy, through [`reusable_optimizer`](@ref) if `reuse` and
+it has a method for this optimizer. The optimizer is instantiated once.
+"""
+function set_node_optimizer!(relaxed::JuMP.Model, optimizer, reuse::Bool)
+    reuse || return JuMP.set_optimizer(relaxed, optimizer)
+    inner = MOI.instantiate(optimizer)
+    stack = reusable_optimizer(inner)
+    if stack === nothing
+        JuMP.set_optimizer(relaxed, () -> inner)
+    else
+        JuMP.set_optimizer(relaxed, () -> stack; add_bridges=false)
+    end
+    return
+end
+
+"""
+    solve(model::JuMP.Model; optimizer, presolve=true, reuse_solver=true, kwargs...) -> Result
 
 Branch and bound on a JuMP model with `Bin`/`Int` variables. The model itself is not
 modified: Sequoia relaxes a copy and solves each node with `optimizer` (e.g.
@@ -111,6 +136,10 @@ and propagates the remaining rows at every node. It also turns
 `integral_objective` on when the objective is affine and integer-valued on those variables.
 Pass `presolve = false` to branch on the model exactly as written.
 
+`reuse_solver = true` keeps the continuous solver between nodes when only finite integer
+bounds change, for optimizers that rebuild on every change otherwise (Clarabel). Any other
+change, or a solver that cannot update its data, rebuilds the solver as usual.
+
 `x` and the vectors passed to `heuristic`/`polish` are ordered like the integer variables in
 `JuMP.all_variables(model)`. `incumbent`, the values returned by `heuristic` and `polish`,
 the progress log, the termination summary, and the `objective`, `bound`, `root_bound` and
@@ -122,7 +151,8 @@ Bounds of the integer variables may be given as variable bounds, by fixing, or a
 
 SOS, semicontinuous, semi-integer and indicator constraints are not supported.
 """
-function solve(model::JuMP.Model; optimizer, presolve::Bool=true, kwargs...)
+function solve(model::JuMP.Model; optimizer, presolve::Bool=true, reuse_solver::Bool=true,
+               kwargs...)
     for (F, S) in JuMP.list_of_constraint_types(model)
         unsupported_set(S) && throw(ArgumentError("constraints of type $F-in-$S are not supported"))
     end
@@ -153,11 +183,16 @@ function solve(model::JuMP.Model; optimizer, presolve::Bool=true, kwargs...)
         end
     end
     JuMP.relax_integrality(relaxed)
-    JuMP.set_optimizer(relaxed, optimizer)
+    set_node_optimizer!(relaxed, optimizer, reuse_solver)
 
+    # the box the relaxed copy holds now; NaN until the first node writes it
+    box_lb = fill(NaN, length(ints))
+    box_ub = fill(NaN, length(ints))
     function relax(lb, ub)
-        for (v, l, u) in zip(ints, lb, ub)
-            set_box!(v, l, u)
+        for i in eachindex(ints)
+            (lb[i] == box_lb[i] && ub[i] == box_ub[i]) && continue
+            set_box!(ints[i], lb[i], ub[i])
+            box_lb[i], box_ub[i] = lb[i], ub[i]
         end
         JuMP.optimize!(relaxed)
         return jump_result(relaxed, ints)
