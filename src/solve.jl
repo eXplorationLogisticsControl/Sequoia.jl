@@ -67,7 +67,7 @@ function solve(relax, lb::AbstractVector, ub::AbstractVector;
     root_bound = evaluate!(t, lb0, ub0, -Inf)
     status = :optimal
     while !isempty(t.open)
-        if time() - t.t0 > o.time_limit
+        if time() - t.t0 >= o.time_limit
             status = :time_limit
             break
         elseif t.nodes >= o.node_limit
