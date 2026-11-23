@@ -35,6 +35,13 @@ NodeResult
 jump_result
 ```
 
+## Primal heuristics
+
+```@docs
+rounding_heuristic
+fixed_oracle
+```
+
 ## Branching rules
 
 ```@docs
