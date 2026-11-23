@@ -10,13 +10,11 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   docs:
-    name: Build and deploy
+    name: Build
     runs-on: ubuntu-latest
     permissions:
       actions: write   # for julia-actions/cache to delete old caches
-      contents: write  # to push to the gh-pages branch
-      pull-requests: read
-      statuses: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
@@ -29,8 +27,42 @@ jobs:
           using Pkg
           Pkg.develop(PackageSpec(path=pwd()))
           Pkg.instantiate()
-      - name: Build and deploy
+      - name: Build
         run: julia --color=yes --project=docs docs/make.jl
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+      # The site is served under dev/; the root redirects there.
+      - name: Assemble site
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p _site
+          cp -R docs/build _site/dev
+          cat > _site/index.html <<'EOF'
+          <!DOCTYPE html>
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=dev/">
+          <link rel="canonical" href="dev/">
+          <a href="dev/">Sequoia.jl documentation</a>
+          EOF
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: _site
+  # Needs Settings → Pages → Source set to "GitHub Actions". Pull requests only build.
+  # Publishing from a release tag needs a tag rule (e.g. `v*`) on the github-pages
+  # environment, which by default accepts only the default branch.
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: docs
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write     # to deploy to GitHub Pages
+      id-token: write  # to verify the deployment's origin
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -10,7 +10,7 @@ makedocs(;
     authors="Yuri Shimane",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://eXplorationLogisticsControl.github.io/Sequoia.jl",
+        canonical="https://eXplorationLogisticsControl.github.io/Sequoia.jl/dev/",
         edit_link="main",
     ),
     pages=[
@@ -25,8 +25,5 @@ makedocs(;
     checkdocs=:exports,
 )
 
-deploydocs(;
-    repo="github.com/eXplorationLogisticsControl/Sequoia.jl",
-    devbranch="main",
-    push_preview=true,
-)
+# Deployment is done by .github/workflows/Documentation.yml, which publishes docs/build
+# to GitHub Pages under dev/.

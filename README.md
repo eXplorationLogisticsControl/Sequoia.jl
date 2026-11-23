@@ -54,6 +54,5 @@ julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()' # 
 julia --project=docs docs/make.jl                                           # build docs
 ```
 
-Docs deployment from GitHub Actions needs a `DOCUMENTER_KEY` deploy key/secret pair
-(generate it with `DocumenterTools.genkeys`), and GitHub Pages serving from the `gh-pages`
-branch.
+The Documentation workflow publishes the docs to GitHub Pages on every push to `main`. It
+needs Settings → Pages → Source set to "GitHub Actions".
